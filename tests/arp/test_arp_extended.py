@@ -2,9 +2,11 @@
 This module tests extended ARP features including gratuitous ARP and proxy ARP
 """
 import logging
+import time
 import ptf.testutils as testutils
 import pytest
 
+from ipaddress import ip_network
 from tests.arp.arp_utils import clear_dut_arp_cache
 from tests.common.helpers.constants import PTF_TIMEOUT
 from tests.common.utilities import increment_ipv4_addr
@@ -52,6 +54,74 @@ def test_arp_garp_enabled(rand_selected_dut, garp_enabled, ip_and_intf_info, int
     switch_arptable = duthost.switch_arptable()['ansible_facts']
     pytest_assert(switch_arptable['arptable']['v4'][arp_request_ip]['macaddress'].lower() == arp_src_mac.lower())
     pytest_assert(switch_arptable['arptable']['v4'][arp_request_ip]['interface'] in vlan_intfs)
+
+
+def test_arp_accept_value(rand_selected_dut, garp_enabled, config_facts):
+    """
+    Verify that arp_accept is set to 2 when grat_arp is enabled.
+
+    The garp_enabled fixture enables grat_arp in CONFIG_DB. This test verifies
+    that the kernel arp_accept sysctl is programmed to 2 (same-subnet only).
+    """
+    duthost = rand_selected_dut
+
+    vlan_intfs = list(config_facts['VLAN_INTERFACE'].keys())
+
+    for vlan in vlan_intfs:
+        arp_accept_res = duthost.shell('cat /proc/sys/net/ipv4/conf/{}/arp_accept'.format(vlan))
+        pytest_assert(int(arp_accept_res['stdout']) == 2,
+                      "Expected arp_accept=2 for {}, got {}".format(vlan, arp_accept_res['stdout']))
+
+
+def test_arp_garp_out_of_subnet_not_learned(rand_selected_dut, garp_enabled, ip_and_intf_info,
+                                            intfs_for_test, config_facts, ptfadapter):
+    """
+    Send a gratuitous ARP (GARP) packet with a source IP outside the subnet
+    of the receiving interface.
+
+    With arp_accept=2, the DUT should NOT learn a neighbor entry from this
+    out-of-subnet GARP.
+    """
+    duthost = rand_selected_dut
+
+    # Derive an out-of-subnet IP from the VLAN's IPv4 subnet
+    vlan_addrs = list(list(config_facts['VLAN_INTERFACE'].items())[0][1].keys())
+    for addr in vlan_addrs:
+        try:
+            net = ip_network(addr, strict=False)
+            if net.version == 4:
+                out_of_subnet_ip = str(net.broadcast_address + 10)
+                break
+        except ValueError:
+            continue
+
+    logger.info("VLAN subnet: {}, out-of-subnet IP: {}".format(net, out_of_subnet_ip))
+    arp_src_mac = '00:00:07:08:09:0b'
+    _, _, intf1_index, _, = intfs_for_test
+
+    pkt = testutils.simple_arp_packet(pktlen=60,
+                                      eth_dst='ff:ff:ff:ff:ff:ff',
+                                      eth_src=arp_src_mac,
+                                      vlan_pcp=0,
+                                      arp_op=2,
+                                      ip_snd=out_of_subnet_ip,
+                                      ip_tgt=out_of_subnet_ip,
+                                      hw_snd=arp_src_mac,
+                                      hw_tgt='ff:ff:ff:ff:ff:ff'
+                                      )
+
+    clear_dut_arp_cache(duthost)
+
+    logger.info("Sending out-of-subnet GARP for target {} from PTF interface {}".format(
+        out_of_subnet_ip, intf1_index))
+    testutils.send_packet(ptfadapter, intf1_index, pkt)
+
+    # Allow some time for the DUT to process the packet
+    time.sleep(2)
+
+    switch_arptable = duthost.switch_arptable()['ansible_facts']
+    pytest_assert(out_of_subnet_ip not in switch_arptable['arptable']['v4'],
+                  "Out-of-subnet GARP source {} should NOT be learned with arp_accept=2".format(out_of_subnet_ip))
 
 
 def test_proxy_arp(rand_selected_dut, proxy_arp_enabled, ip_and_intf_info, ptfadapter, packets_for_test):

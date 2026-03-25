@@ -226,7 +226,7 @@ def garp_enabled(rand_selected_dut, config_facts):
             arp_accept_res = duthost.shell(cat_arp_accept_cmd.format(vlan))
             arp_accept_vals.append(arp_accept_res['stdout'])
 
-    yield all(int(val) == 1 for val in arp_accept_vals)
+    yield all(int(val) == 2 for val in arp_accept_vals)
 
     garp_disable_cmd = 'sonic-db-cli CONFIG_DB HDEL "VLAN_INTERFACE|{}" grat_arp'
     for vlan in vlan_intfs:
