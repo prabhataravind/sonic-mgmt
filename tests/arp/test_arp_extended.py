@@ -86,6 +86,7 @@ def test_arp_garp_out_of_subnet_not_learned(rand_selected_dut, garp_enabled, ip_
 
     # Derive an out-of-subnet IP from the VLAN's IPv4 subnet
     vlan_addrs = list(list(config_facts['VLAN_INTERFACE'].items())[0][1].keys())
+    out_of_subnet_ip = None
     for addr in vlan_addrs:
         try:
             net = ip_network(addr, strict=False)
@@ -94,6 +95,8 @@ def test_arp_garp_out_of_subnet_not_learned(rand_selected_dut, garp_enabled, ip_
                 break
         except ValueError:
             continue
+
+    pytest_assert(out_of_subnet_ip is not None, "No IPv4 VLAN subnet found to derive out-of-subnet IP")
 
     logger.info("VLAN subnet: {}, out-of-subnet IP: {}".format(net, out_of_subnet_ip))
     arp_src_mac = '00:00:07:08:09:0b'
