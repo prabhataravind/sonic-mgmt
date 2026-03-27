@@ -129,7 +129,7 @@ def test_arp_garp_out_of_subnet_not_learned(rand_selected_dut, garp_enabled, ip_
 
 
 def test_ipv6_unsolicited_na_link_local_accepted(rand_selected_dut, garp_enabled, ip_and_intf_info,
-                                                  intfs_for_test, config_facts, ptfadapter):
+                                                 intfs_for_test, config_facts, ptfadapter):
     """
     Send an unsolicited IPv6 Neighbor Advertisement (NA) with a link-local
     source address (fe80::).
@@ -165,7 +165,7 @@ def test_ipv6_unsolicited_na_link_local_accepted(rand_selected_dut, garp_enabled
 
 
 def test_ipv6_unsolicited_na_in_subnet_learned(rand_selected_dut, garp_enabled, ip_and_intf_info,
-                                                intfs_for_test, config_facts, ptfadapter):
+                                               intfs_for_test, config_facts, ptfadapter):
     """
     Send an unsolicited IPv6 Neighbor Advertisement (NA) with a source address
     inside the VLAN's IPv6 subnet.
