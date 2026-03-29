@@ -10,7 +10,7 @@ from ipaddress import ip_network
 from scapy.all import Ether, IPv6, ICMPv6ND_NA, ICMPv6NDOptSrcLLAddr
 from tests.arp.arp_utils import clear_dut_arp_cache
 from tests.common.helpers.constants import PTF_TIMEOUT
-from tests.common.utilities import increment_ipv4_addr
+from tests.common.utilities import increment_ipv4_addr, wait_until
 from tests.common.helpers.assertions import pytest_assert, pytest_require
 
 pytestmark = [
@@ -18,6 +18,29 @@ pytestmark = [
 ]
 
 logger = logging.getLogger(__name__)
+
+
+def _check_neighbor_entry(duthost, ip, version):
+    """Return True if ip is present in the DUT's ARP/neighbor table."""
+    switch_arptable = duthost.switch_arptable()['ansible_facts']
+    return ip in switch_arptable['arptable'][version]
+
+
+def test_arp_accept_value(rand_selected_dut, garp_enabled, config_facts):
+    """
+    Verify that arp_accept is set to 2 when grat_arp is enabled.
+
+    The garp_enabled fixture enables grat_arp in CONFIG_DB. This test verifies
+    that the kernel arp_accept sysctl is programmed to 2 (same-subnet only).
+    """
+    duthost = rand_selected_dut
+
+    vlan_intfs = list(config_facts['VLAN_INTERFACE'].keys())
+
+    for vlan in vlan_intfs:
+        arp_accept_res = duthost.shell('cat /proc/sys/net/ipv4/conf/{}/arp_accept'.format(vlan))
+        pytest_assert(int(arp_accept_res['stdout']) == 2,
+                      "Expected arp_accept=2 for {}, got {}".format(vlan, arp_accept_res['stdout']))
 
 
 def test_arp_garp_enabled(rand_selected_dut, garp_enabled, ip_and_intf_info, intfs_for_test, config_facts, ptfadapter):
@@ -55,23 +78,6 @@ def test_arp_garp_enabled(rand_selected_dut, garp_enabled, ip_and_intf_info, int
     switch_arptable = duthost.switch_arptable()['ansible_facts']
     pytest_assert(switch_arptable['arptable']['v4'][arp_request_ip]['macaddress'].lower() == arp_src_mac.lower())
     pytest_assert(switch_arptable['arptable']['v4'][arp_request_ip]['interface'] in vlan_intfs)
-
-
-def test_arp_accept_value(rand_selected_dut, garp_enabled, config_facts):
-    """
-    Verify that arp_accept is set to 2 when grat_arp is enabled.
-
-    The garp_enabled fixture enables grat_arp in CONFIG_DB. This test verifies
-    that the kernel arp_accept sysctl is programmed to 2 (same-subnet only).
-    """
-    duthost = rand_selected_dut
-
-    vlan_intfs = list(config_facts['VLAN_INTERFACE'].keys())
-
-    for vlan in vlan_intfs:
-        arp_accept_res = duthost.shell('cat /proc/sys/net/ipv4/conf/{}/arp_accept'.format(vlan))
-        pytest_assert(int(arp_accept_res['stdout']) == 2,
-                      "Expected arp_accept=2 for {}, got {}".format(vlan, arp_accept_res['stdout']))
 
 
 def test_arp_garp_out_of_subnet_not_learned(rand_selected_dut, garp_enabled, ip_and_intf_info,
@@ -120,8 +126,8 @@ def test_arp_garp_out_of_subnet_not_learned(rand_selected_dut, garp_enabled, ip_
         out_of_subnet_ip, intf1_index))
     testutils.send_packet(ptfadapter, intf1_index, pkt)
 
-    # Allow some time for the DUT to process the packet
-    time.sleep(2)
+    # Allow time for the DUT to process the packet before verifying it was NOT learned
+    time.sleep(5)
 
     switch_arptable = duthost.switch_arptable()['ansible_facts']
     pytest_assert(out_of_subnet_ip not in switch_arptable['arptable']['v4'],
@@ -157,10 +163,7 @@ def test_ipv6_unsolicited_na_link_local_accepted(rand_selected_dut, garp_enabled
         link_local_ip, intf1_index))
     testutils.send_packet(ptfadapter, intf1_index, pkt)
 
-    time.sleep(2)
-
-    switch_arptable = duthost.switch_arptable()['ansible_facts']
-    pytest_assert(link_local_ip in switch_arptable['arptable']['v6'],
+    pytest_assert(wait_until(5, 1, 0, _check_neighbor_entry, duthost, link_local_ip, 'v6'),
                   "Link-local unsolicited NA source {} should be learned".format(link_local_ip))
 
 
@@ -193,12 +196,11 @@ def test_ipv6_unsolicited_na_in_subnet_learned(rand_selected_dut, garp_enabled, 
         in_subnet_ipv6, intf1_index))
     testutils.send_packet(ptfadapter, intf1_index, pkt)
 
-    time.sleep(2)
+    pytest_assert(wait_until(5, 1, 0, _check_neighbor_entry, duthost, in_subnet_ipv6, 'v6'),
+                  "In-subnet unsolicited NA source {} should be learned".format(in_subnet_ipv6))
 
     vlan_intfs = list(config_facts['VLAN_INTERFACE'].keys())
     switch_arptable = duthost.switch_arptable()['ansible_facts']
-    pytest_assert(in_subnet_ipv6 in switch_arptable['arptable']['v6'],
-                  "In-subnet unsolicited NA source {} should be learned".format(in_subnet_ipv6))
     pytest_assert(switch_arptable['arptable']['v6'][in_subnet_ipv6]['macaddress'].lower() == na_src_mac.lower())
     pytest_assert(switch_arptable['arptable']['v6'][in_subnet_ipv6]['interface'] in vlan_intfs)
 
@@ -223,7 +225,7 @@ def test_ipv6_unsolicited_na_out_of_subnet_not_learned(rand_selected_dut, garp_e
         try:
             net = ip_network(addr, strict=False)
             if net.version == 6:
-                # Use an address well beyond the subnet's broadcast
+                # Use an address well beyond the subnet's range
                 out_of_subnet_ipv6 = str(net.broadcast_address + 10)
                 break
         except ValueError:
@@ -247,7 +249,8 @@ def test_ipv6_unsolicited_na_out_of_subnet_not_learned(rand_selected_dut, garp_e
         out_of_subnet_ipv6, intf1_index))
     testutils.send_packet(ptfadapter, intf1_index, pkt)
 
-    time.sleep(2)
+    # Allow time for the DUT to process the packet before verifying it was NOT learned
+    time.sleep(5)
 
     switch_arptable = duthost.switch_arptable()['ansible_facts']
     pytest_assert(out_of_subnet_ipv6 not in switch_arptable['arptable']['v6'],

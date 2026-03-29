@@ -193,7 +193,10 @@ def garp_enabled(rand_selected_dut, config_facts):
     Tries to enable gratuitious ARP for each VLAN on the ToR in CONFIG_DB
 
     Also checks the kernel `arp_accept` value to see if the
-    attempt was successful.
+    attempt was successful. The expectation is that arp_accept value should be
+    set to 2 (i.e, create new entries only if the source IP address is in the
+    same subnet as the address configured on the interface - available in
+    5.19 linux kernel and newer)
 
     During teardown, restores the original `grat_arp` value in
     CONFIG_DB
