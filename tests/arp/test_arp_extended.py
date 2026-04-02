@@ -43,6 +43,25 @@ def test_arp_accept_value(rand_selected_dut, garp_enabled, config_facts):
                       "Expected arp_accept=2 for {}, got {}".format(vlan, arp_accept_res['stdout']))
 
 
+def test_accept_untracked_na_value(rand_selected_dut, garp_enabled, config_facts):
+    """
+    Verify that accept_untracked_na is set to 2 when grat_arp is enabled.
+
+    The garp_enabled fixture enables grat_arp in CONFIG_DB. This test verifies
+    that the kernel accept_untracked_na sysctl (IPv6) is programmed to 2
+    (same-subnet only).
+    """
+    duthost = rand_selected_dut
+
+    vlan_intfs = list(config_facts['VLAN_INTERFACE'].keys())
+
+    for vlan in vlan_intfs:
+        accept_untracked_na_res = duthost.shell('cat /proc/sys/net/ipv6/conf/{}/accept_untracked_na'.format(vlan))
+        pytest_assert(int(accept_untracked_na_res['stdout']) == 2,
+                      "Expected accept_untracked_na=2 for {}, got {}".format(
+                          vlan, accept_untracked_na_res['stdout']))
+
+
 def test_arp_garp_enabled(rand_selected_dut, garp_enabled, ip_and_intf_info, intfs_for_test, config_facts, ptfadapter):
     """
     Send a gratuitous ARP (GARP) packet from the PTF to the DUT
